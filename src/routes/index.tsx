@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Briefcase, Clock, LayoutGrid, MessageSquare, GraduationCap, Rocket, Award, BarChart3, Trophy,
-  MoreHorizontal, Plus, Minus, User, ChevronDown, CircleDollarSign, Info, Bell, Star, TrendingUp,
-  TrendingDown, Pencil, Radio, X, Volume2, Settings, Maximize, LifeBuoy, ChevronUp, Timer, Flag,
+  Briefcase, Clock, LayoutGrid, Plus, Minus, User, ChevronDown, CircleDollarSign, Info, Bell, Star, TrendingUp,
+  TrendingDown, Pencil, Radio, X, Volume2, Settings, Maximize, LifeBuoy, ChevronUp, Timer, Flag, Bot,
 } from "lucide-react";
+import { useCallback, useRef } from "react";
+import { z } from "zod";
+import { AgentSidecar } from "@/components/AgentSidecar";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -17,6 +19,7 @@ export const Route = createFileRoute("/")({
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
+  validateSearch: z.object({ thread: z.string().optional() }),
   component: Index,
 });
 
@@ -36,8 +39,6 @@ function seed(): Candle[] {
 
 const side = [
   [Briefcase, "PORTFÓLIO TOTAL"], [Clock, "HISTÓRICO DE TRADING"], [LayoutGrid, "MEU DESEMPENHO"],
-  [MessageSquare, "CHATS E SUPORTE"], [GraduationCap, "TUTORIAIS"], [Rocket, "PROMOÇÃO"],
-  [Award, "TABELA DE LÍDERES"], [BarChart3, "ANÁLISE DE MERCADO"], [Trophy, "TORNEIOS"], [MoreHorizontal, "MAIS"],
 ] as const;
 
 function Index() {
@@ -46,6 +47,16 @@ function Index() {
   const [balance, setBalance] = useState(1104.42);
   const [now, setNow] = useState<Date | null>(null);
   const [toast, setToast] = useState(true);
+  const { thread } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const [agentOpen, setAgentOpen] = useState(true);
+  const selectThread = useCallback((id: string) => navigate({ search: { thread: id }, replace: true }), [navigate]);
+  const candlesRef = useRef<Candle[]>([]);
+  const getMarket = useCallback(() => {
+    const cs = candlesRef.current; const last = cs[cs.length - 1];
+    return `Ativo: EUR/USD (OTC). Preço atual: ${last?.c.toFixed(6)}. Últimas velas de 1m (abertura/máxima/mínima/fechamento):\n` +
+      cs.map((c) => [c.o, c.h, c.l, c.c].map((v) => v.toFixed(5)).join(" / ")).join("\n");
+  }, []);
   const [positions, setPositions] = useState<{ dir: "up" | "down"; price: number; amt: number }[]>([]);
 
   useEffect(() => {
@@ -66,6 +77,7 @@ function Index() {
     return () => clearInterval(id);
   }, []);
 
+  candlesRef.current = candles;
   const price = candles[candles.length - 1]!.c;
   const W = 1500, H = 900, min = 1.1250, max = 1.1325;
   const y = (v: number) => H - ((v - min) / (max - min)) * H;
@@ -113,7 +125,15 @@ function Index() {
               <Icon className="h-7 w-7" />{label}
             </button>
           ))}
+          <button onClick={() => setAgentOpen((o) => !o)} className={`flex flex-col items-center gap-1 text-center text-[11px] leading-tight ${agentOpen ? "text-up" : "text-muted-foreground hover:text-foreground"}`}>
+            <Bot className="h-7 w-7" />AGENTE IA
+          </button>
+          <button className="mt-auto flex flex-col items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
+            <Settings className="h-7 w-7" />CONFIGURAÇÃO
+          </button>
         </aside>
+
+        {agentOpen && <AgentSidecar threadId={thread} onSelectThread={selectThread} getMarket={getMarket} onClose={() => setAgentOpen(false)} />}
 
         <main className="flex flex-1 flex-col overflow-hidden">
           <div className="flex flex-1 overflow-hidden">

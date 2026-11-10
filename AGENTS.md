@@ -28,3 +28,6 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+- AI agent calls go through `askAgent` server fn (src/lib/agent.functions.ts) using @lovable.dev/ai-gateway; agent config, threads and tasks persist in browser localStorage — user chose browser storage, no login.
+- Scheduled agent tasks run client-side while the page is open — no backend scheduler exists.
