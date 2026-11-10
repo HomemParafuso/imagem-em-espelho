@@ -55,7 +55,7 @@ function Index() {
       setNow(new Date());
       tick++;
       setCandles((cs) => {
-        const last = { ...cs[cs.length - 1] };
+        const last: Candle = { ...cs[cs.length - 1]! };
         const c = last.c + (Math.random() - 0.5) * 0.00012;
         last.c = c; last.h = Math.max(last.h, c); last.l = Math.min(last.l, c);
         const next = [...cs.slice(0, -1), last];
@@ -66,7 +66,7 @@ function Index() {
     return () => clearInterval(id);
   }, []);
 
-  const price = candles[candles.length - 1].c;
+  const price = candles[candles.length - 1]!.c;
   const W = 1500, H = 900, min = 1.1250, max = 1.1325;
   const y = (v: number) => H - ((v - min) / (max - min)) * H;
   const step = 86, x0 = 40;
