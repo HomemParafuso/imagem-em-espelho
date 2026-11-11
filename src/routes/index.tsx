@@ -67,6 +67,7 @@ function Index() {
   const [ready, setReady] = useState(false);
   const [panel, setPanel] = useState<"portfolio" | "history" | null>(null);
   const [management, setManagement] = useState(false);
+  const [agentConfigRequest, setAgentConfigRequest] = useState(0);
   const [selected, setSelected] = useState<string>();
   const [tradeError, setTradeError] = useState("");
   const ordersRef = useRef<Order[]>([]);
@@ -186,13 +187,13 @@ function Index() {
             <Bot className="h-7 w-7" />AGENTE IA
           </Button>
           <Button variant="ghost" onClick={() => setManagement(true)} className="h-auto w-full whitespace-normal flex-col gap-1 px-1 text-center text-[11px] text-muted-foreground"><ShieldCheck className="h-7 w-7" />GERENCIAMENTO</Button>
-          <Button variant="ghost" onClick={() => setManagement(true)} className="mt-auto h-auto w-full whitespace-normal flex-col gap-1 px-1 text-[11px] text-muted-foreground hover:text-foreground">
+          <Button variant="ghost" onClick={() => { setManagement(false); setPanel(null); setAgentOpen(true); setAgentConfigRequest((request) => request + 1); }} className="mt-auto h-auto w-full whitespace-normal flex-col gap-1 px-1 text-[11px] text-muted-foreground hover:text-foreground">
             <Settings className="h-7 w-7" />CONFIGURAÇÃO
           </Button>
         </aside>
 
         {panel && <OrdersPanel mode={panel} orders={orders} selected={selected} now={now?.getTime() ?? 0} onSelect={selectOrder} onClose={() => setPanel(null)} />}
-        {agentOpen && <AgentSidecar duration={duration} onDuration={setDuration} threadId={thread} onSelectThread={selectThread} getMarket={getMarket} onClose={() => setAgentOpen(false)} />}
+        {agentOpen && <AgentSidecar duration={duration} onDuration={setDuration} openConfigRequest={agentConfigRequest} threadId={thread} onSelectThread={selectThread} getMarket={getMarket} onClose={() => setAgentOpen(false)} />}
 
         <main className="trading-main flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex flex-1 overflow-hidden">

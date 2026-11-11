@@ -25,8 +25,8 @@ const defaults = (): Store => ({
   tasks: [],
 });
 
-export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose, duration, onDuration }: {
-  threadId: string | undefined; onSelectThread: (id: string) => void; getMarket: () => string; onClose: () => void; duration: number; onDuration: (n: number) => void;
+export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose, duration, onDuration, openConfigRequest }: {
+  threadId: string | undefined; onSelectThread: (id: string) => void; getMarket: () => string; onClose: () => void; duration: number; onDuration: (n: number) => void; openConfigRequest?: number;
 }) {
   const [store, setStore] = useState<Store | null>(null);
   const [view, setView] = useState<"chat" | "config" | "tasks">("chat");
@@ -57,6 +57,7 @@ export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose, dur
 
   const active = store?.threads.find((t) => t.id === threadId) ?? store?.threads[0];
   useEffect(() => { if (store && active && active.id !== threadId) onSelectThread(active.id); }, [store, active, threadId, onSelectThread]);
+  useEffect(() => { if (openConfigRequest) setView("config"); }, [openConfigRequest]);
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); taRef.current?.focus(); }, [active?.messages.length, busy, view]);
 
   const run = useCallback(async (tid: string, text: string) => {
