@@ -2,11 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   Briefcase, Clock, LayoutGrid, Plus, Minus, User, ChevronDown, CircleDollarSign, Info, Bell, Star, TrendingUp,
-  TrendingDown, Pencil, Radio, X, Volume2, Settings, Maximize, LifeBuoy, ChevronUp, Timer, Flag, Bot,
+  TrendingDown, Pencil, Radio, X, Volume2, Settings, Maximize, LifeBuoy, ChevronUp, Timer, Flag, Bot, ShieldCheck,
 } from "lucide-react";
 import { useCallback, useRef } from "react";
 import { z } from "zod";
 import { AgentSidecar } from "@/components/AgentSidecar";
+import { OrdersPanel } from "@/components/OrdersPanel";
+import { ManagementPanel } from "@/components/ManagementPanel";
+import { Button } from "@/components/ui/button";
+import { defaultRules, settleOrder, tradeBlock, entryAmount, type Order, type Rules } from "@/lib/trading";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -57,7 +61,36 @@ function Index() {
     return `Ativo: EUR/USD (OTC). Preço atual: ${last?.c.toFixed(6)}. Últimas velas de 1m (abertura/máxima/mínima/fechamento):\n` +
       cs.map((c) => [c.o, c.h, c.l, c.c].map((v) => v.toFixed(5)).join(" / ")).join("\n");
   }, []);
-  const [positions, setPositions] = useState<{ dir: "up" | "down"; price: number; amt: number }[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [rules, setRules] = useState<Rules>(defaultRules);
+  const [duration, setDuration] = useState(60);
+  const [ready, setReady] = useState(false);
+  const [panel, setPanel] = useState<"portfolio" | "history" | null>(null);
+  const [management, setManagement] = useState(false);
+  const [selected, setSelected] = useState<string>();
+  const [tradeError, setTradeError] = useState("");
+  const ordersRef = useRef<Order[]>([]);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("tradex-trading-v1");
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (Array.isArray(saved.orders)) { setOrders(saved.orders); ordersRef.current = saved.orders; }
+        if (typeof saved.balance === "number") setBalance(saved.balance);
+        if (saved.rules) { const merged = {...defaultRules,...saved.rules}; setRules(merged); setInvest(merged.entry); }
+        if (typeof saved.duration === "number" && saved.duration >= 5 && saved.duration <= 3600) setDuration(saved.duration);
+      }
+    } catch { /* Keep demo defaults when browser storage is unavailable. */ }
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    ordersRef.current = orders;
+    try { localStorage.setItem("tradex-trading-v1", JSON.stringify({orders,balance,rules,duration})); } catch { /* In-memory session remains usable. */ }
+  }, [orders,balance,rules,duration,ready]);
+  const positions = orders.filter(o => o.closedAt === undefined);
+  const chosen = orders.find(o => o.id === selected);
+  const changeRules = (r: Rules) => { setRules(r); setInvest(r.entry); setTradeError(""); };
 
   useEffect(() => {
     setNow(new Date());
@@ -66,7 +99,9 @@ function Index() {
       setNow(new Date());
       tick++;
       setCandles((cs) => {
-        const last: Candle = { ...cs[cs.length - 1]! };
+        const previous = cs[cs.length - 1];
+        if (!previous) return cs;
+        const last: Candle = { ...previous };
         const c = last.c + (Math.random() - 0.5) * 0.00012;
         last.c = c; last.h = Math.max(last.h, c); last.l = Math.min(last.l, c);
         const next = [...cs.slice(0, -1), last];
@@ -78,7 +113,22 @@ function Index() {
   }, []);
 
   candlesRef.current = candles;
-  const price = candles[candles.length - 1]!.c;
+  const price = candles[candles.length - 1]?.c ?? 1.1262;
+  useEffect(() => {
+    if (!ready || !now) return;
+    const time = now.getTime();
+    let credit = 0;
+    const next = ordersRef.current.map(o => {
+      const closed = settleOrder(o, price, time);
+      if (closed !== o) credit += o.amt + (closed.result ?? 0);
+      return closed;
+    });
+    if (next.some((o,i) => o !== ordersRef.current[i])) {
+      ordersRef.current = next;
+      setOrders(next);
+      setBalance(b => Number((b + credit).toFixed(2)));
+    }
+  }, [now,price,ready]);
   const W = 1500, H = 900, min = 1.1250, max = 1.1325;
   const y = (v: number) => H - ((v - min) / (max - min)) * H;
   const step = 86, x0 = 40;
@@ -91,10 +141,17 @@ function Index() {
   const secsLeft = now ? 60 - now.getSeconds() : 0;
 
   const trade = (dir: "up" | "down") => {
-    if (invest > balance) return;
-    setBalance((b) => b - invest);
-    setPositions((p) => [...p, { dir, price, amt: invest }]);
+    if (!ready) return;
+    const amount = entryAmount({...rules,entry:invest},balance,ordersRef.current);
+    const error = tradeBlock(rules,ordersRef.current,amount,balance,1104.42);
+    if (error) { setTradeError(error); return; }
+    const time = Date.now();
+    const order: Order = {id:crypto.randomUUID(),asset:"EUR/USD (OTC)",dir:rules.invert ? dir === "up" ? "down" : "up" : dir,price,amt:amount,openedAt:time,expiresAt:time + duration * 1000};
+    const next = [...ordersRef.current,order]; ordersRef.current = next; setOrders(next);
+    setBalance(b => Number((b-amount).toFixed(2))); setSelected(order.id); setTradeError(""); setToast(false);
   };
+  const openPanel = (p: "portfolio" | "history") => { setPanel(current => current === p ? null : p); setAgentOpen(false); };
+  const selectOrder = (o: Order) => {setSelected(o.id);setToast(false);};
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground select-none">
@@ -117,25 +174,27 @@ function Index() {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside className="flex w-[92px] flex-col items-center gap-5 border-r border-border bg-panel py-4">
-          {side.map(([Icon, label]) => (
-            <button key={label} className="flex flex-col items-center gap-1 text-center text-[11px] leading-tight text-muted-foreground hover:text-foreground">
+        <aside className="nav-rail flex w-[92px] shrink-0 flex-col items-center gap-5 border-r border-border bg-panel py-4">
+          {side.slice(0,2).map(([Icon, label],i) => (
+            <Button variant="ghost" key={label} onClick={() => openPanel(i === 0 ? "portfolio" : "history")} className={`h-auto w-full whitespace-normal rounded-none flex-col gap-1 px-1 text-center text-[11px] leading-tight ${panel === (i === 0 ? "portfolio" : "history") ? "bg-panel-2 text-foreground" : "text-muted-foreground"}`}>
               <Icon className="h-7 w-7" />{label}
-            </button>
+            </Button>
           ))}
-          <button onClick={() => setAgentOpen((o) => !o)} className={`flex flex-col items-center gap-1 text-center text-[11px] leading-tight ${agentOpen ? "text-up" : "text-muted-foreground hover:text-foreground"}`}>
+          <Button variant="ghost" onClick={() => {setAgentOpen((o) => !o);setPanel(null);}} className={`h-auto w-full whitespace-normal flex-col gap-1 px-1 text-center text-[11px] leading-tight ${agentOpen ? "text-up" : "text-muted-foreground hover:text-foreground"}`}>
             <Bot className="h-7 w-7" />AGENTE IA
-          </button>
-          <button className="mt-auto flex flex-col items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
+          </Button>
+          <Button variant="ghost" onClick={() => setManagement(true)} className="h-auto w-full whitespace-normal flex-col gap-1 px-1 text-center text-[11px] text-muted-foreground"><ShieldCheck className="h-7 w-7" />GERENCIAMENTO</Button>
+          <Button variant="ghost" onClick={() => setManagement(true)} className="mt-auto h-auto w-full whitespace-normal flex-col gap-1 px-1 text-[11px] text-muted-foreground hover:text-foreground">
             <Settings className="h-7 w-7" />CONFIGURAÇÃO
-          </button>
+          </Button>
         </aside>
 
-        {agentOpen && <AgentSidecar threadId={thread} onSelectThread={selectThread} getMarket={getMarket} onClose={() => setAgentOpen(false)} />}
+        {panel && <OrdersPanel mode={panel} orders={orders} selected={selected} now={now?.getTime() ?? 0} onSelect={selectOrder} onClose={() => setPanel(null)} />}
+        {agentOpen && <AgentSidecar duration={duration} onDuration={setDuration} threadId={thread} onSelectThread={selectThread} getMarket={getMarket} onClose={() => setAgentOpen(false)} />}
 
-        <main className="flex flex-1 flex-col overflow-hidden">
+        <main className="trading-main flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex flex-1 overflow-hidden">
             {/* Chart */}
             <section className="world-dots relative flex-1 overflow-hidden">
@@ -179,7 +238,7 @@ function Index() {
                 <line x1={lastX} x2={lastX} y1={0} y2={H - 40} stroke="var(--foreground)" strokeDasharray="3 4" />
                 <line x1={lastX + 50} x2={lastX + 50} y1={0} y2={H - 40} stroke="var(--down)" strokeWidth={3} />
                 <text x={lastX + 60} y={y(price) + 6} fontSize="16" fill="var(--muted-foreground)">00:{String(secsLeft).padStart(2, "0")}</text>
-                {positions.map((p, i) => <line key={i} x1={0} x2={W} y1={y(p.price)} y2={y(p.price)} stroke={p.dir === "up" ? "var(--up)" : "var(--down)"} strokeWidth={2} />)}
+                {(chosen ? [chosen] : positions).map(p => <g key={p.id}><line x1={0} x2={W} y1={y(p.price)} y2={y(p.price)} stroke={p.dir === "up" ? "var(--up)" : "var(--down)"} strokeWidth={selected === p.id ? 4 : 2} /><text x={120} y={y(p.price)-12} fill={p.dir === "up" ? "var(--up)" : "var(--down)"} fontSize={22}>{p.dir === "up" ? "▲" : "▼"} ${p.amt.toFixed(2)} · {p.price.toFixed(5)}</text></g>)}
               </svg>
 
               <div className="absolute right-0 z-10 flex items-center" style={{ top: `calc(${(y(price) / H) * 100}% - 18px)` }}>
@@ -187,6 +246,7 @@ function Index() {
                 <div className="flex h-9 items-center bg-foreground px-3 font-medium text-background">{price.toFixed(4)}<span className="text-down">{price.toFixed(6).slice(-2)}</span></div>
               </div>
 
+              {chosen && <div className="absolute left-16 right-4 top-32 z-20 flex flex-wrap items-center gap-2 rounded border border-border bg-panel p-3 text-xs" data-testid="selected-order"><span className="font-medium">{chosen.asset} · {chosen.dir === "up" ? "ACIMA" : "ABAIXO"} · ${chosen.amt.toFixed(2)}</span><span className={chosen.result === undefined ? "text-gold" : chosen.result >= 0 ? "text-up" : "text-down"}>{chosen.closedAt === undefined ? `Em execução · ${Math.max(0,Math.ceil((chosen.expiresAt-(now?.getTime() ?? chosen.openedAt))/1000))}s` : `Encerrada · resultado ${chosen.result?.toFixed(2)}`}</span><Button variant="ghost" size="icon" className="ml-auto h-6 w-6" aria-label="Limpar seleção" onClick={() => setSelected(undefined)}><X /></Button></div>}
               <div className="absolute bottom-24 left-3 z-10 flex flex-col gap-2">
                 {[<Radio key="a" className="h-4 w-4" />, "1m", <Radio key="b" className="h-4 w-4" />, <Pencil key="c" className="h-4 w-4" />, <TrendingUp key="d" className="h-4 w-4" />, "5m"].map((el, i) => (
                   <button key={i} className="grid h-10 w-10 place-items-center rounded border border-border bg-panel text-sm font-medium">{el}</button>
@@ -209,12 +269,13 @@ function Index() {
             </section>
 
             {/* Trade panel */}
-            <aside className="flex w-[150px] flex-col gap-2 p-2">
+            <aside className="trade-controls flex w-[150px] shrink-0 flex-col gap-2 p-2">
               <Stepper label="Invest" value={`$ ${invest}`} onPlus={() => setInvest((v) => v + 1)} onMinus={() => setInvest((v) => Math.max(1, v - 1))} />
-              <Stepper label="Expiração" value="18:30" onPlus={() => {}} onMinus={() => {}} />
+              <Stepper label="Duração" value={`${duration}s`} onPlus={() => setDuration(v => Math.min(3600,v+5))} onMinus={() => setDuration(v => Math.max(5,v-5))} />
               <div className="mt-2 text-center"><div className="text-sm">Lucro</div><div className="text-5xl font-light text-up">+86<span className="text-2xl">%</span></div><div className="text-xl font-medium text-up">+${(invest * 0.86).toFixed(2)}</div></div>
-              <button onClick={() => trade("up")} className="flex h-36 flex-col items-center justify-center gap-2 rounded bg-up font-medium hover:brightness-110"><TrendingUp className="h-8 w-8" />ACIMA</button>
-              <button onClick={() => trade("down")} className="flex h-36 flex-col items-center justify-center gap-2 rounded bg-down font-medium hover:brightness-110"><TrendingDown className="h-8 w-8" />ABAIXO</button>
+              <Button disabled={!ready} onClick={() => trade("up")} className="flex h-36 flex-col items-center justify-center gap-2 rounded bg-up text-foreground font-medium hover:bg-up/90"><TrendingUp className="h-8 w-8" />ACIMA</Button>
+              <Button disabled={!ready} onClick={() => trade("down")} className="flex h-36 flex-col items-center justify-center gap-2 rounded bg-down text-foreground font-medium hover:bg-down/90"><TrendingDown className="h-8 w-8" />ABAIXO</Button>
+              {tradeError && <p role="alert" className="text-xs text-down">{tradeError}</p>}
             </aside>
           </div>
 
@@ -223,9 +284,10 @@ function Index() {
             <span className="ml-auto flex items-center gap-2 text-muted-foreground">Exibir posições <ChevronUp className="h-4 w-4" /></span>
           </div>
           <div className="flex h-10 items-center justify-center gap-2 text-sm text-muted-foreground">
-            {positions.length ? positions.map((p, i) => <span key={i} className={p.dir === "up" ? "text-up" : "text-down"}>${p.amt} @ {p.price.toFixed(5)}</span>) : <>Você ainda não tem nenhuma posição aberta <Plus className="h-4 w-4 border border-border" /></>}
+            {positions.length ? positions.map(p => <Button key={p.id} variant="ghost" onClick={() => selectOrder(p)} className={p.dir === "up" ? "text-up" : "text-down"}>${p.amt} @ {p.price.toFixed(5)}</Button>) : <>Você ainda não tem nenhuma posição aberta <Plus className="h-4 w-4 border border-border" /></>}
           </div>
         </main>
+        {management && <ManagementPanel rules={rules} onChange={changeRules} onClose={() => setManagement(false)} />}
       </div>
 
       <footer className="flex h-11 items-center gap-4 border-t border-border bg-panel px-2 text-sm text-muted-foreground">

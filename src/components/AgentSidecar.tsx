@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Bot, Plus, Settings, CalendarClock, Trash2, Send, X, Play, Loader2, PanelLeftClose } from "lucide-react";
 import { askAgent, AGENT_MODELS } from "@/lib/agent.functions";
+import { askLocalAgent } from "@/lib/local-agent";
+import { Button } from "@/components/ui/button";
 
 type Msg = { role: "user" | "assistant"; content: string };
 type Thread = { id: string; title: string; updatedAt: number; messages: Msg[] };
-type Config = { name: string; instructions: string; model: (typeof AGENT_MODELS)[number]; temperature: number; useChart: boolean };
+type Config = { name: string; instructions: string; model: (typeof AGENT_MODELS)[number]; temperature: number; useChart: boolean; provider: "gateway" | "local"; localUrl: string; localModel: string };
 type Task = { id: string; name: string; prompt: string; everyMin: number; enabled: boolean; lastRun: number; threadId?: string };
 type Store = { config: Config; threads: Thread[]; tasks: Task[] };
 
@@ -18,13 +20,13 @@ const MODEL_LABEL: Record<Config["model"], string> = {
 };
 const newThread = (title = "Nova conversa"): Thread => ({ id: crypto.randomUUID().slice(0, 8), title, updatedAt: Date.now(), messages: [] });
 const defaults = (): Store => ({
-  config: { name: "Analista", instructions: "Você é um analista de mercado. Responda em português, de forma curta e objetiva.", model: "openai/gpt-6-astra", temperature: 0.7, useChart: true },
+  config: { name: "Analista", instructions: "Você é um analista de mercado. Responda em português, de forma curta e objetiva.", model: "openai/gpt-6-astra", temperature: 0.7, useChart: true, provider: "gateway", localUrl: "http://localhost:11434", localModel: "llama3.2" },
   threads: [newThread()],
   tasks: [],
 });
 
-export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose }: {
-  threadId: string | undefined; onSelectThread: (id: string) => void; getMarket: () => string; onClose: () => void;
+export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose, duration, onDuration }: {
+  threadId: string | undefined; onSelectThread: (id: string) => void; getMarket: () => string; onClose: () => void; duration: number; onDuration: (n: number) => void;
 }) {
   const [store, setStore] = useState<Store | null>(null);
   const [view, setView] = useState<"chat" | "config" | "tasks">("chat");
@@ -38,6 +40,7 @@ export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose }: {
     let s: Store;
     try { s = JSON.parse(localStorage.getItem(KEY) || "null") ?? defaults(); } catch { s = defaults(); }
     if (!s.threads.length) s.threads = [newThread()];
+    s.config = { ...s.config, provider: s.config.provider ?? "gateway", localUrl: s.config.localUrl ?? "http://localhost:11434", localModel: s.config.localModel ?? "llama3.2" };
     localStorage.setItem(KEY, JSON.stringify(s));
     storeRef.current = s; setStore(s);
   }, []);
@@ -64,13 +67,14 @@ export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose }: {
     setBusy(tid);
     try {
       const c = s.config;
-      const res = await askAgent({ data: { model: c.model, instructions: `Seu nome é ${c.name}. ${c.instructions}`, temperature: c.temperature, marketContext: c.useChart ? getMarket() : undefined, messages } });
+      const instructions = `Seu nome é ${c.name}. ${c.instructions}\nDuração das ordens: ${duration} segundos. Você fornece análises, mas não executa ordens.`;
+      const res = c.provider === "local" ? await askLocalAgent({ url: c.localUrl, model: c.localModel, instructions, temperature: c.temperature, marketContext: c.useChart ? getMarket() : undefined, messages }) : await askAgent({ data: { model: c.model, instructions, temperature: c.temperature, marketContext: c.useChart ? getMarket() : undefined, messages } });
       const content = res.ok ? res.text : `⚠️ ${res.text}`;
       update((st) => ({ ...st, threads: st.threads.map((t) => t.id === tid ? { ...t, messages: [...t.messages, { role: "assistant", content }], updatedAt: Date.now() } : t) }));
     } catch {
-      update((st) => ({ ...st, threads: st.threads.map((t) => t.id === tid ? { ...t, messages: [...t.messages, { role: "assistant", content: "⚠️ Não foi possível falar com o agente." }] } : t) }));
+      update((st) => ({ ...st, threads: st.threads.map((t) => t.id === tid ? { ...t, messages: [...t.messages, { role: "assistant", content: s.config.provider === "local" ? "⚠️ Não foi possível acessar o Ollama. Verifique endereço, modelo instalado, OLLAMA_ORIGINS e a permissão de conexões locais no navegador." : "⚠️ Não foi possível falar com o agente." }] } : t) }));
     } finally { setBusy(null); }
-  }, [getMarket, update]);
+  }, [getMarket, update, duration]);
 
   // scheduler (runs while this page is open)
   useEffect(() => {
@@ -111,17 +115,20 @@ export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose }: {
         <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
           <Field label="Nome"><input className="input" value={cfg.name} onChange={(e) => setCfg({ name: e.target.value })} /></Field>
           <Field label="Instruções"><textarea rows={6} className="input" value={cfg.instructions} onChange={(e) => setCfg({ instructions: e.target.value })} /></Field>
-          <Field label="Modelo de IA">
+          <Field label="Provedor"><select aria-label="Provedor" className="input" value={cfg.provider} onChange={e => setCfg({provider: e.target.value === "local" ? "local" : "gateway"})}><option value="gateway">Lovable AI</option><option value="local">Local — Ollama</option></select></Field>
+          {cfg.provider === "local" && <><Field label="Endereço do Ollama"><input className="input" aria-label="Endereço do Ollama" value={cfg.localUrl} onChange={e => setCfg({localUrl:e.target.value})} /></Field><Field label="Modelo local"><input className="input" aria-label="Modelo local" value={cfg.localModel} onChange={e => setCfg({localModel:e.target.value})} /></Field></>}
+          <Field label="Duração das ordens (segundos)"><input className="input" type="number" aria-label="Duração das ordens (segundos)" min={5} max={3600} value={duration} onChange={e => {const n = Number(e.target.value); if(Number.isFinite(n) && n >= 5 && n <= 3600) onDuration(n);}} /></Field>
+          <Field label="Modelo de IA (Lovable AI)">
             <select className="input" value={cfg.model} onChange={(e) => setCfg({ model: e.target.value as Config["model"] })}>
               {AGENT_MODELS.map((m) => <option key={m} value={m}>{MODEL_LABEL[m]}</option>)}
             </select>
           </Field>
           <Field label={`Criatividade: ${cfg.temperature.toFixed(1)}`}>
             <input type="range" min={0} max={2} step={0.1} value={cfg.temperature} onChange={(e) => setCfg({ temperature: +e.target.value })} className="w-full accent-up" />
-            {cfg.model !== "openai/gpt-5.4-mini" && <p className="mt-1 text-xs text-muted-foreground">Só tem efeito no modelo GPT-5.4 Mini.</p>}
+            {cfg.provider === "gateway" && cfg.model !== "openai/gpt-5.4-mini" && <p className="mt-1 text-xs text-muted-foreground">Só tem efeito no modelo GPT-5.4 Mini.</p>}
           </Field>
           <label className="flex items-center gap-2"><input type="checkbox" checked={cfg.useChart} onChange={(e) => setCfg({ useChart: e.target.checked })} className="accent-up" />Enviar dados do gráfico ao agente</label>
-          <button onClick={() => setView("chat")} className="w-full rounded bg-up py-2 font-medium">Pronto</button>
+          <Button variant="ghost" onClick={() => setView("chat")} className="w-full rounded bg-up py-2 font-medium">Pronto</Button>
         </div>
       )}
 
@@ -129,11 +136,11 @@ export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose }: {
 
       {view === "chat" && (<>
         <div className="max-h-40 shrink-0 overflow-y-auto border-b border-border p-2">
-          <button onClick={createThread} className="mb-1 flex w-full items-center gap-2 rounded border border-dashed border-border px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground"><Plus className="h-4 w-4" />Nova conversa</button>
+          <Button variant="ghost" onClick={createThread} className="mb-1 flex w-full items-center gap-2 rounded border border-dashed border-border px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground"><Plus className="h-4 w-4" />Nova conversa</Button>
           {store.threads.slice().sort((a, b) => b.updatedAt - a.updatedAt).map((t) => (
             <div key={t.id} className={`group flex items-center rounded text-sm ${t.id === active.id ? "bg-panel-2" : "hover:bg-panel-2/60"}`}>
-              <button onClick={() => onSelectThread(t.id)} className="flex-1 truncate px-2 py-1.5 text-left">{t.title}</button>
-              <button onClick={() => removeThread(t.id)} className="px-2 text-muted-foreground opacity-0 hover:text-down group-hover:opacity-100" aria-label="Apagar"><Trash2 className="h-3.5 w-3.5" /></button>
+              <Button variant="ghost" onClick={() => onSelectThread(t.id)} className="flex-1 truncate px-2 py-1.5 text-left">{t.title}</Button>
+              <Button variant="ghost" onClick={() => removeThread(t.id)} className="px-2 text-muted-foreground opacity-0 hover:text-down group-hover:opacity-100" aria-label="Apagar"><Trash2 className="h-3.5 w-3.5" /></Button>
             </div>
           ))}
         </div>
@@ -149,7 +156,7 @@ export function AgentSidecar({ threadId, onSelectThread, getMarket, onClose }: {
           <textarea ref={taRef} rows={2} value={input} onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
             placeholder="Mensagem…" className="input flex-1 resize-none" />
-          <button onClick={send} disabled={!!busy || !input.trim()} className="grid h-10 w-10 place-items-center rounded bg-up disabled:opacity-40" aria-label="Enviar"><Send className="h-4 w-4" /></button>
+          <Button variant="ghost" onClick={send} disabled={!!busy || !input.trim()} className="grid h-10 w-10 place-items-center rounded bg-up disabled:opacity-40" aria-label="Enviar"><Send className="h-4 w-4" /></Button>
         </div>
       </>)}
     </aside>
@@ -166,14 +173,14 @@ function TasksView({ tasks, busy, onChange, onRunNow }: { tasks: Task[]; busy: b
         <input className="input" placeholder="Nome (ex: Resumo do mercado)" value={name} onChange={(e) => setName(e.target.value)} />
         <textarea className="input" rows={3} placeholder="O que o agente deve fazer?" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
         <div className="flex items-center gap-2">A cada <input type="number" min={1} className="input w-20" value={every} onChange={(e) => setEvery(+e.target.value)} /> min
-          <button onClick={add} className="ml-auto rounded bg-up px-3 py-1.5 font-medium">Agendar</button></div>
+          <Button variant="ghost" onClick={add} className="ml-auto rounded bg-up px-3 py-1.5 font-medium">Agendar</Button></div>
       </div>
       {tasks.map((t) => (
         <div key={t.id} className="rounded bg-panel-2 p-3">
           <div className="flex items-center gap-2">
             <span className="flex-1 font-medium">{t.name}</span>
-            <button disabled={busy} title="Rodar agora" onClick={() => onRunNow(t)} className="text-up disabled:opacity-40"><Play className="h-4 w-4" /></button>
-            <button title="Remover" onClick={() => onChange(tasks.filter((x) => x.id !== t.id))} className="text-muted-foreground hover:text-down"><X className="h-4 w-4" /></button>
+            <Button variant="ghost" disabled={busy} title="Rodar agora" onClick={() => onRunNow(t)} className="text-up disabled:opacity-40"><Play className="h-4 w-4" /></Button>
+            <Button variant="ghost" title="Remover" onClick={() => onChange(tasks.filter((x) => x.id !== t.id))} className="text-muted-foreground hover:text-down"><X className="h-4 w-4" /></Button>
           </div>
           <p className="mt-1 line-clamp-2 text-muted-foreground">{t.prompt}</p>
           <label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" className="accent-up" checked={t.enabled} onChange={(e) => onChange(tasks.map((x) => x.id === t.id ? { ...x, enabled: e.target.checked } : x))} />Ativa · a cada {t.everyMin} min</label>
@@ -187,5 +194,5 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="block"><span className="mb-1 block text-xs text-muted-foreground">{label}</span>{children}</label>;
 }
 function IconBtn({ children, title, onClick, active }: { children: React.ReactNode; title: string; onClick: () => void; active?: boolean }) {
-  return <button title={title} onClick={onClick} className={`flex h-8 items-center gap-1 rounded px-2 ${active ? "bg-panel-2 text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{children}</button>;
+  return <Button variant="ghost" title={title} onClick={onClick} className={`flex h-8 items-center gap-1 rounded px-2 ${active ? "bg-panel-2 text-foreground" : "text-muted-foreground hover:text-foreground"}`}>{children}</Button>;
 }
