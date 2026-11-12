@@ -8,3 +8,4 @@
 - [ ] Verify Ollama inference: blocked by access to the user's local Ollama service.
 - [ ] Enable external protection filters and undefined management strategies: blocked by external data integrations and agreed strategy formulas.
 - [x] Explain the two-engine strategy workflow, per-chat consolidation, demo/real authorization and continuous learning boundaries.
+- [x] Fix agent menu redirecting to broker login without clearing or fabricating a broker session; verified repeated reopening, conversation creation, reload and settings without login.

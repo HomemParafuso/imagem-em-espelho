@@ -141,13 +141,8 @@ function Index() {
   const [tradeError, setTradeError] = useState("");
   const ordersRef = useRef<Order[]>([]);
 
-  // Proteção de rota simples: verificar autenticação
-  useEffect(() => {
-    const ssid = localStorage.getItem("parafuso_ssid");
-    if (!ssid) {
-      window.location.href = "/login.html";
-    }
-  }, []);
+  // The agent and browser-stored conversations do not require a broker session.
+  // Broker authorization belongs to the broker API, not chat navigation.
 
   // Conexão com WebSocket real
   const mergeIncomingCandles = useCallback((incoming: WsCandle[]) => {

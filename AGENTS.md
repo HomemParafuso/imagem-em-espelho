@@ -30,6 +30,7 @@ use the editor.
 <!-- LOVABLE:END -->
 
 - AI agent calls go through `askAgent` server fn (src/lib/agent.functions.ts) using @lovable.dev/ai-gateway; agent config, threads and tasks persist in browser localStorage — user chose browser storage, no login.
+- Opening the agent or switching browser-stored conversations must not require or clear a broker session; broker APIs remain responsible for authorizing trading.
 - Scheduled agent tasks run client-side while the page is open — no backend scheduler exists.
 - Demo orders and management settings persist in browser storage; settlement uses simulated prices while the page is open, with overdue orders settled on reopening, never live broker execution.
 - Local agent requests use the browser's Ollama HTTP API so localhost targets the user's machine; no credentials are stored and browser local-network/CORS permissions apply.
