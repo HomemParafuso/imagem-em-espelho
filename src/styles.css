@@ -267,3 +267,5 @@ body { font-family: var(--font-sans); }
   footer.h-11 > :not(:first-child) { display: none; }
   [aria-label="Gerenciamento"] > div { padding: 12px; }
 }
+
+@media (max-width: 1100px) { .strategy-sidecar { position: absolute; left: 72px; top: 0; bottom: 0; z-index: 30; width: min(380px, calc(100% - 72px)); } }

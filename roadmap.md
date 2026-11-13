@@ -1,10 +1,14 @@
 # Requested work
+- [x] Strategy, execution and evolution workspace per conversation, with versioned approval and isolated demo execution.
+- [x] Validate strategy safeguards, demo lifecycle, real AI proposal approval, persistence and conversation isolation; 32 tests passed.
+- [ ] Connect strategy execution to broker-authorized demo/real orders: blocked by unavailable broker service and verified account authorization.
+- [ ] Continuous research and automatic bounded demo adjustments: blocked by agreed experiment/authorization limits and a background scheduler; current research is explicitly requested and synthetic only.
 - [x] Portfolio and order selection on the chart.
 - [x] Settled order history and browser persistence.
 - [x] Agent provider/local endpoint and order duration settings.
 - [x] Management rules and advanced protection settings from the references.
 - [x] Trading logic tests and routing test (8 passed).
-- [ ] End-to-end verification of current broker-connected screen: blocked by the newly introduced account sign-in; no authenticated session available.
+- [ ] End-to-end verification of current broker-connected screen: blocked by unavailable broker service and authenticated broker session.
 - [ ] Verify Ollama inference: blocked by access to the user's local Ollama service.
 - [ ] Enable external protection filters and undefined management strategies: blocked by external data integrations and agreed strategy formulas.
 - [x] Explain the two-engine strategy workflow, per-chat consolidation, demo/real authorization and continuous learning boundaries.

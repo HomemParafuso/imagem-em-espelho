@@ -14,15 +14,9 @@ import {
 } from "lucide-react";
 import { askAgent, AGENT_MODELS } from "@/lib/agent.functions";
 import { askLocalAgent } from "@/lib/local-agent";
-import {
-  createDefaultStrategy,
-  extractStrategyProposal,
-  loadStrategyStore,
-  saveStrategyStore,
-  syncStrategyRules,
-  type StrategyContract,
-  type StrategyProposal,
-} from "@/lib/strategy-contract";
+import { extractWorkspaceProposal, workspaceKey } from "@/lib/strategy-workspace";
+import { useStrategyWorkspace } from "@/hooks/use-strategy-workspace";
+import { StrategyWorkspace } from "@/components/StrategyWorkspace";
 import type { Rules } from "@/lib/trading";
 import { Button } from "@/components/ui/button";
 
@@ -51,8 +45,6 @@ type Store = {
   config: Config;
   threads: Thread[];
   tasks: Task[];
-  strategy: StrategyContract;
-  proposals: StrategyProposal[];
 };
 
 const KEY = "tradex-agent-v1";
@@ -82,8 +74,6 @@ const defaults = (): Store => ({
   },
   threads: [newThread()],
   tasks: [],
-  strategy: createDefaultStrategy(),
-  proposals: [],
 });
 
 export function AgentSidecar({
@@ -106,7 +96,7 @@ export function AgentSidecar({
   rules?: Rules;
 }) {
   const [store, setStore] = useState<Store | null>(null);
-  const [view, setView] = useState<"chat" | "config" | "tasks">("chat");
+  const [view, setView] = useState<"chat" | "config" | "tasks" | "strategy" | "execution" | "evolution">("chat");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const storeRef = useRef<Store | null>(null);
@@ -127,9 +117,6 @@ export function AgentSidecar({
       localUrl: s.config.localUrl ?? "http://localhost:11434",
       localModel: s.config.localModel ?? "llama3.2",
     };
-    const strategyStore = loadStrategyStore();
-    if (!s.strategy) s.strategy = strategyStore.active;
-    if (!s.proposals) s.proposals = strategyStore.proposals;
     localStorage.setItem(KEY, JSON.stringify(s));
     storeRef.current = s;
     setStore(s);
@@ -145,20 +132,8 @@ export function AgentSidecar({
     });
   }, []);
 
-  useEffect(() => {
-    if (!store || !rules) return;
-    const strategy = syncStrategyRules(store.strategy, rules);
-    if (
-      JSON.stringify(strategy.rules) === JSON.stringify(store.strategy.rules) &&
-      strategy.mode === store.strategy.mode
-    )
-      return;
-    update((current) => ({ ...current, strategy }));
-    const persisted = loadStrategyStore(rules);
-    saveStrategyStore({ ...persisted, active: strategy });
-  }, [rules, store, update]);
-
   const active = store?.threads.find((t) => t.id === threadId) ?? store?.threads[0];
+  const { workspace, update: updateWorkspace, get: getWorkspace, updateFor: updateWorkspaceFor } = useStrategyWorkspace(active?.id, rules, duration);
   useEffect(() => {
     if (store && active && active.id !== threadId) onSelectThread(active.id);
   }, [store, active, threadId, onSelectThread]);
@@ -193,7 +168,12 @@ export function AgentSidecar({
       setBusy(tid);
       try {
         const c = s.config;
-        const instructions = `Seu nome é ${c.name}. ${c.instructions}\nDuração das ordens: ${duration} segundos. Você fornece análises e propostas, mas não executa ordens sem passar pelo validador do sistema.\nContrato ativo da estratégia:\n${JSON.stringify(s.strategy)}\nSe propuser uma mudança concreta na estratégia, acrescente ao final exatamente este bloco JSON: <strategy-proposal>{"summary":"...","rationale":"...","changes":["..."]}</strategy-proposal>. Não aplique a mudança por conta própria.`;
+        const contract = getWorkspace(tid);
+        const instructions = `Seu nome é ${c.name}. ${c.instructions}
+Você é o pesquisador de estratégias. Ordens nesta conversa são exclusivamente simulações sintéticas, nunca operações na corretora. Não afirme ter iniciado, pausado ou aprovado operações: esses comandos exigem confirmação nos controles. Não há aprendizado ou retreinamento em segundo plano. Contrato e resultados desta conversa:
+${JSON.stringify({ draft: contract.draft, approved: contract.versions.at(-1), session: { status: contract.session.status, balance: contract.session.balance, orders: contract.session.orders.slice(-20), decisions: contract.session.decisions.slice(-10) } })}
+Regras executáveis: momentum (direção das últimas N velas) ou ma-cross (cruzamento do preço com EMA). Saída por duração de 5 a 3600 segundos, payout simulado 86%, uma ordem por vez, stops absolutos. Outros sinais não estão implementados. Para propor ajustes acrescente <strategy-proposal>{"summary":"...","rationale":"...","patch":{"signal":"momentum","period":5,"duration":60,"entry":12,"stopWin":100,"stopLoss":100}}</strategy-proposal>. Inclua somente os campos alterados no patch. Valores válidos: period inteiro 2-100; entry 0.01-1000; stops 0.01-100000; mode demo ou real (execução real bloqueada). Nunca aplique uma proposta sem aprovação. Se a estratégia discutida exigir outra fórmula, explique a limitação em vez de inventar execução.`;
+
         const res =
           c.provider === "local"
             ? await askLocalAgent({
@@ -214,10 +194,9 @@ export function AgentSidecar({
                 },
               });
         const content = res.ok ? res.text : `⚠️ ${res.text}`;
-        const proposal = res.ok ? extractStrategyProposal(content, s.strategy, tid) : null;
+        const proposal = res.ok ? extractWorkspaceProposal(content, contract) : null;
         update((st) => ({
           ...st,
-          proposals: proposal ? [...st.proposals, proposal] : st.proposals,
           threads: st.threads.map((t) =>
             t.id === tid
               ? {
@@ -228,10 +207,7 @@ export function AgentSidecar({
               : t,
           ),
         }));
-        if (proposal) {
-          const persisted = loadStrategyStore();
-          saveStrategyStore({ ...persisted, proposals: [...persisted.proposals, proposal] });
-        }
+        if (proposal) updateWorkspaceFor(tid, w => ({ ...w, proposals: [...w.proposals, proposal] }));
       } catch {
         update((st) => ({
           ...st,
@@ -257,7 +233,7 @@ export function AgentSidecar({
         setBusy(null);
       }
     },
-    [getMarket, update, duration],
+    [getMarket, update, getWorkspace, updateWorkspaceFor],
   );
 
   // scheduler (runs while this page is open)
@@ -301,25 +277,26 @@ export function AgentSidecar({
     onSelectThread(th.id);
     setView("chat");
   };
-  const removeThread = (id: string) =>
+  const removeThread = (id: string) => {
+    localStorage.removeItem(workspaceKey(id));
     update((s) => {
       const rest = s.threads.filter((t) => t.id !== id);
       return { ...s, threads: rest.length ? rest : [newThread()] };
     });
+  };
   const cfg = store.config;
   const setCfg = (p: Partial<Config>) => update((s) => ({ ...s, config: { ...s.config, ...p } }));
 
   return (
-    <aside className="flex w-[340px] shrink-0 flex-col border-r border-border bg-panel">
+    <aside aria-label="Agente de estratégias" className="strategy-sidecar flex min-h-0 w-[380px] shrink-0 flex-col border-r border-border bg-panel">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <div className="grid h-8 w-8 place-items-center rounded-full bg-up/20 text-up">
           <Bot className="h-5 w-5" />
         </div>
-        <div className="flex-1 truncate font-medium">
+        <div className="min-w-0 flex-1 truncate font-medium">
           {cfg.name}
           <div className="text-[10px] font-normal text-muted-foreground">
-            Estratégia v{store.strategy.version} ·{" "}
-            {store.strategy.mode === "demo" ? "DEMO" : "REAL"}
+            Estratégia v{workspace?.versions.at(-1)?.version ?? 0} · {workspace?.draft.mode === "real" ? "REAL BLOQUEADA" : "DEMO"}
           </div>
         </div>
         <IconBtn
@@ -341,6 +318,11 @@ export function AgentSidecar({
           <PanelLeftClose className="h-4 w-4" />
         </IconBtn>
       </div>
+
+      <nav className="grid shrink-0 grid-cols-4 border-b border-border" aria-label="Áreas do agente">
+        {([["chat", "Chat"], ["strategy", "Estratégia"], ["execution", "Execução"], ["evolution", "Evolução"]] as const).map(([key, label]) => <Button key={key} variant="ghost" onClick={() => setView(key)} aria-pressed={view === key} className={`rounded-none px-1 text-xs ${view === key ? "border-b-2 border-up text-up" : "text-muted-foreground"}`}>{label}</Button>)}
+      </nav>
+      {workspace && (view === "strategy" || view === "execution" || view === "evolution") && <StrategyWorkspace key={`${active.id}:${view}`} view={view} workspace={workspace} onChange={updateWorkspace} onDiscuss={prompt => { setInput(prompt); setView("chat"); }} />}
 
       {view === "config" && (
         <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
@@ -508,7 +490,7 @@ export function AgentSidecar({
           <div className="flex-1 space-y-3 overflow-y-auto p-3 text-sm">
             {!active.messages.length && (
               <p className="mt-8 text-center text-muted-foreground">
-                Pergunte algo ao {cfg.name}, como “Como está o EUR/USD agora?”
+                {active.title} · conversa sem mensagens
               </p>
             )}
             {active.messages.map((m, i) =>
@@ -518,7 +500,7 @@ export function AgentSidecar({
                 </div>
               ) : (
                 <div key={i} className="prose-chat">
-                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                  <ReactMarkdown>{m.content.replace(/<strategy-proposal>[\s\S]*?<\/strategy-proposal>/gi, "")}</ReactMarkdown>
                 </div>
               ),
             )}

@@ -35,3 +35,7 @@ use the editor.
 - Demo orders and management settings persist in browser storage; settlement uses simulated prices while the page is open, with overdue orders settled on reopening, never live broker execution.
 - Local agent requests use the browser's Ollama HTTP API so localhost targets the user's machine; no credentials are stored and browser local-network/CORS permissions apply.
 - Management execution supports entry sizing, Martingale, Soros, recovery, stops and direction inversion; external filters and undefined strategies remain disabled until their integrations and formulas are supplied.
+
+- Conversation strategy workspaces are isolated by thread ID and versioned independently; global management settings are copied only at creation to avoid silently modifying approved contracts.
+- The strategy executor uses synthetic quotes and a separate demo bankroll, never broker trade endpoints; explicit start is required after reopening or switching conversations.
+- Research proposals contain validated definition patches and require approval against their base version while execution is paused; model text never authorizes trading or changes an approved version.
